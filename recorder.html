@@ -86,15 +86,11 @@
     width: 80%;
     max-width: 600px;
     height: 120px;
-    background-color: #00FF00;
+    background-color: white;
     border: 2px solid #2a5d84;
     border-radius: 8px;
     margin: 1em auto;
     display: none;
-  }
-  
-  .waveform.visible {
-    display: block;
   }
 </style>
 </head>
@@ -335,8 +331,9 @@ stopBtn.addEventListener('click', () => {
     recordedBlob = encodeWAV(buffer, 44100);
     console.log('WAV blob size:', recordedBlob.size);
     
-    // Force canvas to show
+    // Force canvas to show with bright green background
     waveformCanvas.classList.add('visible');
+    waveformCanvas.style.backgroundColor = '#00FF00';
     console.log('Canvas display:', window.getComputedStyle(waveformCanvas).display);
     console.log('Canvas dimensions:', waveformCanvas.offsetWidth, 'x', waveformCanvas.offsetHeight);
     
