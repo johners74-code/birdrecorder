@@ -335,7 +335,7 @@ stopBtn.addEventListener('click', () => {
     recordedBlob = encodeWAV(buffer, 44100);
     console.log('WAV blob size:', recordedBlob.size);
     
-    // Force canvas to show with bright green background
+    // Force canvas to show with soft green background
     waveformCanvas.style.display = 'block';
     waveformCanvas.style.backgroundColor = '#EDFFF4';
     console.log('Canvas display:', window.getComputedStyle(waveformCanvas).display);
@@ -474,7 +474,10 @@ function mergeBuffers(channelBuffer, recordingLength) {
 }
 
 function encodeWAV(samples, sampleRate) {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  // Normalize audio with soft limiting to increase amplitude without clipping
+  const normalized = normalizeAudio(samples, 0.95);
+  
+  const buffer = new ArrayBuffer(44 + normalized.length * 2);
   const view = new DataView(buffer);
 
   function writeString(view, offset, string) {
@@ -487,7 +490,7 @@ function encodeWAV(samples, sampleRate) {
   const byteRate = sampleRate * blockAlign;
 
   writeString(view, 0, 'RIFF');
-  view.setUint32(4, 36 + samples.length * 2, true);
+  view.setUint32(4, 36 + normalized.length * 2, true);
   writeString(view, 8, 'WAVE');
   writeString(view, 12, 'fmt ');
   view.setUint32(16, 16, true);
@@ -498,11 +501,41 @@ function encodeWAV(samples, sampleRate) {
   view.setUint16(32, blockAlign, true);
   view.setUint16(34, 16, true);
   writeString(view, 36, 'data');
-  view.setUint32(40, samples.length * 2, true);
+  view.setUint32(40, normalized.length * 2, true);
 
-  floatTo16BitPCM(view, 44, samples);
+  floatTo16BitPCM(view, 44, normalized);
 
   return new Blob([view], { type: 'audio/wav' });
+}
+
+function normalizeAudio(samples, targetLevel) {
+  // Find the peak amplitude
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const abs = Math.abs(samples[i]);
+    if (abs > peak) peak = abs;
+  }
+  
+  // If audio is too quiet, boost it
+  if (peak < 0.1) peak = 0.1; // Prevent over-amplification of silence
+  
+  // Calculate gain to reach target level
+  const gain = targetLevel / peak;
+  
+  // Apply gain with soft limiting
+  const result = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    let sample = samples[i] * gain;
+    
+    // Soft clipping using tanh for smooth limiting
+    if (Math.abs(sample) > 0.9) {
+      sample = Math.tanh(sample * 1.2) * 0.95;
+    }
+    
+    result[i] = sample;
+  }
+  
+  return result;
 }
 
 function floatTo16BitPCM(output, offset, input) {
@@ -524,4 +557,3 @@ function downloadBlob(blob) {
 </script>
 </body>
 </html>
-
