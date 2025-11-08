@@ -390,8 +390,13 @@ function updateLevelMeter() {
 }
 
 function drawWaveform(samples) {
-  const width = waveformCanvas.width;
-  const height = waveformCanvas.height;
+  // Ensure canvas has proper dimensions
+  waveformCanvas.width = waveformCanvas.offsetWidth * window.devicePixelRatio;
+  waveformCanvas.height = waveformCanvas.offsetHeight * window.devicePixelRatio;
+  waveformCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  
+  const width = waveformCanvas.offsetWidth;
+  const height = waveformCanvas.offsetHeight;
   const step = Math.ceil(samples.length / width);
   
   waveformCtx.clearRect(0, 0, width, height);
@@ -399,8 +404,15 @@ function drawWaveform(samples) {
   waveformCtx.strokeStyle = '#2a5d84';
   waveformCtx.lineWidth = 1;
   
+  // Draw center line
+  waveformCtx.strokeStyle = '#ccc';
   waveformCtx.beginPath();
   waveformCtx.moveTo(0, height / 2);
+  waveformCtx.lineTo(width, height / 2);
+  waveformCtx.stroke();
+  
+  // Draw waveform
+  waveformCtx.fillStyle = '#2a5d84';
   
   for (let i = 0; i < width; i++) {
     let min = 1.0;
@@ -415,8 +427,9 @@ function drawWaveform(samples) {
       }
     }
     
-    const yMin = ((min + 1) / 2) * height;
-    const yMax = ((max + 1) / 2) * height;
+    // Convert from [-1, 1] to pixel coordinates
+    const yMin = height / 2 - (min * height / 2);
+    const yMax = height / 2 - (max * height / 2);
     
     waveformCtx.fillRect(i, yMax, 1, Math.max(1, yMin - yMax));
   }
