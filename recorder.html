@@ -335,10 +335,8 @@ stopBtn.addEventListener('click', () => {
     recordedBlob = encodeWAV(buffer, 44100);
     console.log('WAV blob size:', recordedBlob.size);
     
-    // Force canvas to show
-    waveformCanvas.classList.add('visible');
-    console.log('Canvas display:', window.getComputedStyle(waveformCanvas).display);
-    console.log('Canvas dimensions:', waveformCanvas.offsetWidth, 'x', waveformCanvas.offsetHeight);
+    // Make sure canvas is visible before drawing
+    waveformCanvas.style.display = 'block';
     
     // Give the canvas time to render
     setTimeout(() => {
