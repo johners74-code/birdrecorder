@@ -335,9 +335,8 @@ stopBtn.addEventListener('click', () => {
     recordedBlob = encodeWAV(buffer, 44100);
     console.log('WAV blob size:', recordedBlob.size);
     
-    // Force canvas to show with bright green background
+    // Force canvas to show
     waveformCanvas.classList.add('visible');
-    waveformCanvas.style.backgroundColor = '#00FF00';
     console.log('Canvas display:', window.getComputedStyle(waveformCanvas).display);
     console.log('Canvas dimensions:', waveformCanvas.offsetWidth, 'x', waveformCanvas.offsetHeight);
     
