@@ -86,7 +86,7 @@
     width: 80%;
     max-width: 600px;
     height: 120px;
-    background-color: #90EE90;
+    background-color: #00FF00;
     border: 2px solid #2a5d84;
     border-radius: 8px;
     margin: 1em auto;
@@ -335,8 +335,11 @@ stopBtn.addEventListener('click', () => {
     recordedBlob = encodeWAV(buffer, 44100);
     console.log('WAV blob size:', recordedBlob.size);
     
-    // Make sure canvas is visible before drawing
-    waveformCanvas.style.display = 'block';
+    // Force canvas to show with bright green background
+    waveformCanvas.classList.add('visible');
+    waveformCanvas.style.backgroundColor = '#00FF00';
+    console.log('Canvas display:', window.getComputedStyle(waveformCanvas).display);
+    console.log('Canvas dimensions:', waveformCanvas.offsetWidth, 'x', waveformCanvas.offsetHeight);
     
     // Give the canvas time to render
     setTimeout(() => {
