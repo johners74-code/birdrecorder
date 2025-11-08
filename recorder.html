@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bird Sound Recorder</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    text-align: center;
+    background-color: #f2f7f5;
+    margin: 0;
+    padding: 2em;
+  }
+  h1 {
+    color: #2a5d84;
+    margin-bottom: 1em;
+  }
+  button {
+    font-size: 1.2em;
+    padding: 1em 2em;
+    margin: 0.5em;
+    border: none;
+    border-radius: 12px;
+    color: white;
+    background-color: #2a5d84;
+    cursor: pointer;
+  }
+  button:disabled {
+    background-color: #888;
+    cursor: not-allowed;
+  }
+  button.toggle {
+    background-color: #428c42;
+  }
+  .status {
+    margin-top: 1.5em;
+    font-weight: bold;
+    color: #333;
+  }
+</style>
+</head>
+<body>
+  <h1>Bird Sound Recorder</h1>
+
+  <button id="startBtn">Start Recording</button>
+  <button id="stopBtn" disabled>Stop Recording</button>
+  <button id="filterToggle" class="toggle">High-Pass Filter: ON</button>
+
+  <div class="status" id="status">Ready</div>
+
+<script>
+let audioContext;
+let mediaStream;
+let mediaSource;
+let processor;
+let highPassFilter;
+let recording = false;
+let leftChannel = [];
+let recordingLength = 0;
+let filterEnabled = true;
+
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const filterToggle = document.getElementById('filterToggle');
+const statusEl = document.getElementById('status');
+
+filterToggle.addEventListener('click', () => {
+  filterEnabled = !filterEnabled;
+  filterToggle.textContent = `High-Pass Filter: ${filterEnabled ? 'ON' : 'OFF'}`;
+  filterToggle.classList.toggle('toggle', filterEnabled);
+  if (highPassFilter) {
+    highPassFilter.disconnect();
+    if (filterEnabled) {
+      mediaSource.connect(highPassFilter);
+      highPassFilter.connect(processor);
+    } else {
+      mediaSource.connect(processor);
+    }
+  }
+});
+
+startBtn.addEventListener('click', async () => {
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 44100,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      }
+    });
+
+    mediaSource = audioContext.createMediaStreamSource(mediaStream);
+    highPassFilter = audioContext.createBiquadFilter();
+    highPassFilter.type = "highpass";
+    highPassFilter.frequency.value = 350;
+
+    processor = audioContext.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = e => {
+      if (!recording) return;
+      const channelData = e.inputBuffer.getChannelData(0);
+      leftChannel.push(new Float32Array(channelData));
+      recordingLength += channelData.length;
+    };
+
+    if (filterEnabled) {
+      mediaSource.connect(highPassFilter);
+      highPassFilter.connect(processor);
+    } else {
+      mediaSource.connect(processor);
+    }
+
+    processor.connect(audioContext.destination);
+
+    leftChannel = [];
+    recordingLength = 0;
+    recording = true;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    statusEl.textContent = "Recording…";
+
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Error: Microphone access failed.";
+  }
+});
+
+stopBtn.addEventListener('click', () => {
+  recording = false;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  statusEl.textContent = "Processing…";
+
+  processor.disconnect();
+  if (highPassFilter) highPassFilter.disconnect();
+  mediaSource.disconnect();
+  mediaStream.getTracks().forEach(track => track.stop());
+
+  const buffer = mergeBuffers(leftChannel, recordingLength);
+  const wavBlob = encodeWAV(buffer, 44100);
+  downloadBlob(wavBlob);
+
+  statusEl.textContent = "Recording saved.";
+});
+
+function mergeBuffers(channelBuffer, recordingLength) {
+  const result = new Float32Array(recordingLength);
+  let offset = 0;
+  for (let i = 0; i < channelBuffer.length; i++) {
+    result.set(channelBuffer[i], offset);
+    offset += channelBuffer[i].length;
+  }
+  return result;
+}
+
+function encodeWAV(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+
+  const blockAlign = 2; // mono 16-bit
+  const byteRate = sampleRate * blockAlign;
+
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);  // PCM
+  view.setUint16(22, 1, true);  // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true); // bits per sample
+  writeString(view, 36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+
+  floatTo16BitPCM(view, 44, samples);
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+function floatTo16BitPCM(output, offset, input) {
+  for (let i = 0; i < input.length; i++, offset += 2) {
+    let s = Math.max(-1, Math.min(1, input[i]));
+    output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+}
+
+function downloadBlob(blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  a.href = url;
+  a.download = `bird_recording_${timestamp}.wav`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
