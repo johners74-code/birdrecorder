@@ -86,7 +86,7 @@
     width: 80%;
     max-width: 600px;
     height: 120px;
-    background-color: white;
+    background-color: #e8f4f0;
     border: 2px solid #2a5d84;
     border-radius: 8px;
     margin: 1em auto;
@@ -314,6 +314,10 @@ stopBtn.addEventListener('click', () => {
   peakWarning.textContent = '';
 
   setTimeout(() => {
+    console.log('Processing recording...');
+    console.log('Recorded chunks:', leftChannel.length);
+    console.log('Total samples:', recordingLength);
+    
     if (workletNode) workletNode.disconnect();
     if (highPassFilter) highPassFilter.disconnect();
     if (lowPassFilter) lowPassFilter.disconnect();
@@ -322,13 +326,20 @@ stopBtn.addEventListener('click', () => {
     mediaStream.getTracks().forEach(track => track.stop());
 
     const buffer = mergeBuffers(leftChannel, recordingLength);
+    console.log('Merged buffer length:', buffer.length);
+    
     recordedBlob = encodeWAV(buffer, 44100);
+    console.log('WAV blob size:', recordedBlob.size);
     
-    drawWaveform(buffer);
+    // Make sure canvas is visible before drawing
     waveformCanvas.style.display = 'block';
-    playbackControls.style.display = 'block';
     
-    statusEl.textContent = "Recording complete. Play or save your recording.";
+    // Give the canvas time to render
+    setTimeout(() => {
+      drawWaveform(buffer);
+      playbackControls.style.display = 'block';
+      statusEl.textContent = "Recording complete. Play or save your recording.";
+    }, 50);
   }, 100);
 });
 
@@ -377,10 +388,12 @@ function updateLevelMeter() {
     if (normalized > max) max = normalized;
   }
   
-  const percent = Math.min(100, max * 100);
+  // Much more aggressive scaling - multiply by 3 and cap at 100%
+  const boostedLevel = Math.min(1, max * 3);
+  const percent = boostedLevel * 100;
   levelBar.style.width = percent + '%';
   
-  if (max > 0.95) {
+  if (max > 0.85) {
     peakWarning.textContent = '⚠️ WARNING: Audio clipping detected!';
   } else {
     peakWarning.textContent = '';
