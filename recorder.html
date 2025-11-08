@@ -33,10 +33,64 @@
   button.toggle {
     background-color: #428c42;
   }
+  button.play {
+    background-color: #d4a017;
+  }
+  button.save {
+    background-color: #c45a3a;
+  }
   .status {
     margin-top: 1.5em;
     font-weight: bold;
     color: #333;
+  }
+  .timer {
+    font-size: 2em;
+    margin: 1em 0;
+    color: #2a5d84;
+  }
+  .level-container {
+    margin: 2em auto;
+    width: 80%;
+    max-width: 600px;
+  }
+  .level-meter {
+    width: 100%;
+    height: 40px;
+    background-color: #ddd;
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+  }
+  .level-bar {
+    height: 100%;
+    background: linear-gradient(to right, #428c42, #d4a017, #c45a3a);
+    width: 0%;
+    transition: width 0.05s;
+  }
+  .level-text {
+    margin-top: 0.5em;
+    font-size: 0.9em;
+    color: #666;
+  }
+  .peak-warning {
+    color: #c45a3a;
+    font-weight: bold;
+    margin-top: 0.5em;
+    min-height: 1.2em;
+  }
+  .playback-controls {
+    margin-top: 1.5em;
+  }
+  .waveform {
+    width: 80%;
+    max-width: 600px;
+    height: 120px;
+    background-color: white;
+    border: 2px solid #2a5d84;
+    border-radius: 8px;
+    margin: 1em auto;
+    display: none;
   }
 </style>
 </head>
@@ -47,42 +101,131 @@
   <button id="stopBtn" disabled>Stop Recording</button>
   <button id="filterToggle" class="toggle">High-Pass Filter: ON</button>
 
+  <div class="timer" id="timer">00:00</div>
+
+  <div class="level-container">
+    <div class="level-meter">
+      <div class="level-bar" id="levelBar"></div>
+    </div>
+    <div class="level-text">Audio Level</div>
+    <div class="peak-warning" id="peakWarning"></div>
+  </div>
+
+  <canvas class="waveform" id="waveform"></canvas>
+
+  <div class="playback-controls" id="playbackControls" style="display: none;">
+    <button id="playBtn" class="play">Play Recording</button>
+    <button id="saveBtn" class="save">Save Recording</button>
+  </div>
+
   <div class="status" id="status">Ready</div>
 
 <script>
+// AudioWorklet processor code
+const processorCode = `
+class RecorderProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.recording = false;
+    this.port.onmessage = (e) => {
+      if (e.data.command === 'start') {
+        this.recording = true;
+      } else if (e.data.command === 'stop') {
+        this.recording = false;
+      }
+    };
+  }
+
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    if (this.recording && input.length > 0) {
+      const channelData = input[0];
+      this.port.postMessage({
+        audio: channelData.slice()
+      });
+    }
+    return true;
+  }
+}
+
+registerProcessor('recorder-processor', RecorderProcessor);
+`;
+
 let audioContext;
 let mediaStream;
 let mediaSource;
-let processor;
+let workletNode;
 let highPassFilter;
+let lowPassFilter;
+let analyser;
 let recording = false;
 let leftChannel = [];
 let recordingLength = 0;
 let filterEnabled = true;
+let startTime;
+let timerInterval;
+let animationId;
+let recordedBlob = null;
+let audioElement = null;
 
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const filterToggle = document.getElementById('filterToggle');
 const statusEl = document.getElementById('status');
+const timerEl = document.getElementById('timer');
+const levelBar = document.getElementById('levelBar');
+const peakWarning = document.getElementById('peakWarning');
+const waveformCanvas = document.getElementById('waveform');
+const waveformCtx = waveformCanvas.getContext('2d');
+const playbackControls = document.getElementById('playbackControls');
+const playBtn = document.getElementById('playBtn');
+const saveBtn = document.getElementById('saveBtn');
+
+// Setup canvas
+waveformCanvas.width = waveformCanvas.offsetWidth;
+waveformCanvas.height = waveformCanvas.offsetHeight;
 
 filterToggle.addEventListener('click', () => {
   filterEnabled = !filterEnabled;
   filterToggle.textContent = `High-Pass Filter: ${filterEnabled ? 'ON' : 'OFF'}`;
   filterToggle.classList.toggle('toggle', filterEnabled);
-  if (highPassFilter) {
-    highPassFilter.disconnect();
-    if (filterEnabled) {
-      mediaSource.connect(highPassFilter);
-      highPassFilter.connect(processor);
-    } else {
-      mediaSource.connect(processor);
-    }
+  
+  if (recording) {
+    reconnectAudioGraph();
   }
 });
+
+function reconnectAudioGraph() {
+  if (!mediaSource || !workletNode) return;
+  
+  // Disconnect everything
+  mediaSource.disconnect();
+  if (highPassFilter) highPassFilter.disconnect();
+  if (lowPassFilter) lowPassFilter.disconnect();
+  if (analyser) analyser.disconnect();
+  
+  // Reconnect with current filter settings
+  if (filterEnabled) {
+    mediaSource.connect(highPassFilter);
+    highPassFilter.connect(lowPassFilter);
+    lowPassFilter.connect(analyser);
+    lowPassFilter.connect(workletNode);
+  } else {
+    mediaSource.connect(analyser);
+    mediaSource.connect(workletNode);
+  }
+}
 
 startBtn.addEventListener('click', async () => {
   try {
     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+    
+    // Create AudioWorklet
+    const blob = new Blob([processorCode], { type: 'application/javascript' });
+    const url = URL.createObjectURL(blob);
+    await audioContext.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -94,33 +237,61 @@ startBtn.addEventListener('click', async () => {
     });
 
     mediaSource = audioContext.createMediaStreamSource(mediaStream);
+    
+    // High-pass filter (100 Hz)
     highPassFilter = audioContext.createBiquadFilter();
     highPassFilter.type = "highpass";
-    highPassFilter.frequency.value = 350;
+    highPassFilter.frequency.value = 100;
+    highPassFilter.Q.value = 0.7;
 
-    processor = audioContext.createScriptProcessor(4096, 1, 1);
-    processor.onaudioprocess = e => {
-      if (!recording) return;
-      const channelData = e.inputBuffer.getChannelData(0);
-      leftChannel.push(new Float32Array(channelData));
-      recordingLength += channelData.length;
+    // Low-pass filter (16 kHz)
+    lowPassFilter = audioContext.createBiquadFilter();
+    lowPassFilter.type = "lowpass";
+    lowPassFilter.frequency.value = 16000;
+    lowPassFilter.Q.value = 0.7;
+
+    // Analyser for level meter
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.8;
+
+    // AudioWorklet node
+    workletNode = new AudioWorkletNode(audioContext, 'recorder-processor');
+    workletNode.port.onmessage = (e) => {
+      if (e.data.audio) {
+        leftChannel.push(new Float32Array(e.data.audio));
+        recordingLength += e.data.audio.length;
+      }
     };
 
+    // Connect audio graph
     if (filterEnabled) {
       mediaSource.connect(highPassFilter);
-      highPassFilter.connect(processor);
+      highPassFilter.connect(lowPassFilter);
+      lowPassFilter.connect(analyser);
+      lowPassFilter.connect(workletNode);
     } else {
-      mediaSource.connect(processor);
+      mediaSource.connect(analyser);
+      mediaSource.connect(workletNode);
     }
-
-    processor.connect(audioContext.destination);
 
     leftChannel = [];
     recordingLength = 0;
     recording = true;
+    startTime = Date.now();
+    
+    workletNode.port.postMessage({ command: 'start' });
+    
     startBtn.disabled = true;
     stopBtn.disabled = false;
+    filterToggle.disabled = false;
+    playbackControls.style.display = 'none';
+    waveformCanvas.style.display = 'none';
     statusEl.textContent = "Recording…";
+
+    updateTimer();
+    timerInterval = setInterval(updateTimer, 100);
+    updateLevelMeter();
 
   } catch (err) {
     console.error(err);
@@ -130,21 +301,126 @@ startBtn.addEventListener('click', async () => {
 
 stopBtn.addEventListener('click', () => {
   recording = false;
+  workletNode.port.postMessage({ command: 'stop' });
+  
   startBtn.disabled = false;
   stopBtn.disabled = true;
+  filterToggle.disabled = false;
   statusEl.textContent = "Processing…";
+  
+  clearInterval(timerInterval);
+  cancelAnimationFrame(animationId);
+  levelBar.style.width = '0%';
+  peakWarning.textContent = '';
 
-  processor.disconnect();
-  if (highPassFilter) highPassFilter.disconnect();
-  mediaSource.disconnect();
-  mediaStream.getTracks().forEach(track => track.stop());
+  setTimeout(() => {
+    if (workletNode) workletNode.disconnect();
+    if (highPassFilter) highPassFilter.disconnect();
+    if (lowPassFilter) lowPassFilter.disconnect();
+    if (analyser) analyser.disconnect();
+    if (mediaSource) mediaSource.disconnect();
+    mediaStream.getTracks().forEach(track => track.stop());
 
-  const buffer = mergeBuffers(leftChannel, recordingLength);
-  const wavBlob = encodeWAV(buffer, 44100);
-  downloadBlob(wavBlob);
+    const buffer = mergeBuffers(leftChannel, recordingLength);
+    recordedBlob = encodeWAV(buffer, 44100);
+    
+    drawWaveform(buffer);
+    waveformCanvas.style.display = 'block';
+    playbackControls.style.display = 'block';
+    
+    statusEl.textContent = "Recording complete. Play or save your recording.";
+  }, 100);
+});
 
+playBtn.addEventListener('click', () => {
+  if (!recordedBlob) return;
+  
+  if (audioElement && !audioElement.paused) {
+    audioElement.pause();
+    audioElement.currentTime = 0;
+    playBtn.textContent = 'Play Recording';
+    return;
+  }
+  
+  audioElement = new Audio(URL.createObjectURL(recordedBlob));
+  audioElement.play();
+  playBtn.textContent = 'Stop Playback';
+  
+  audioElement.onended = () => {
+    playBtn.textContent = 'Play Recording';
+    URL.revokeObjectURL(audioElement.src);
+  };
+});
+
+saveBtn.addEventListener('click', () => {
+  if (!recordedBlob) return;
+  downloadBlob(recordedBlob);
   statusEl.textContent = "Recording saved.";
 });
+
+function updateTimer() {
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+  const seconds = (elapsed % 60).toString().padStart(2, '0');
+  timerEl.textContent = `${minutes}:${seconds}`;
+}
+
+function updateLevelMeter() {
+  if (!recording || !analyser) return;
+  
+  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteTimeDomainData(dataArray);
+  
+  let max = 0;
+  for (let i = 0; i < dataArray.length; i++) {
+    const normalized = Math.abs((dataArray[i] - 128) / 128);
+    if (normalized > max) max = normalized;
+  }
+  
+  const percent = Math.min(100, max * 100);
+  levelBar.style.width = percent + '%';
+  
+  if (max > 0.95) {
+    peakWarning.textContent = '⚠️ WARNING: Audio clipping detected!';
+  } else {
+    peakWarning.textContent = '';
+  }
+  
+  animationId = requestAnimationFrame(updateLevelMeter);
+}
+
+function drawWaveform(samples) {
+  const width = waveformCanvas.width;
+  const height = waveformCanvas.height;
+  const step = Math.ceil(samples.length / width);
+  
+  waveformCtx.clearRect(0, 0, width, height);
+  waveformCtx.fillStyle = '#2a5d84';
+  waveformCtx.strokeStyle = '#2a5d84';
+  waveformCtx.lineWidth = 1;
+  
+  waveformCtx.beginPath();
+  waveformCtx.moveTo(0, height / 2);
+  
+  for (let i = 0; i < width; i++) {
+    let min = 1.0;
+    let max = -1.0;
+    
+    for (let j = 0; j < step; j++) {
+      const index = i * step + j;
+      if (index < samples.length) {
+        const datum = samples[index];
+        if (datum < min) min = datum;
+        if (datum > max) max = datum;
+      }
+    }
+    
+    const yMin = ((min + 1) / 2) * height;
+    const yMax = ((max + 1) / 2) * height;
+    
+    waveformCtx.fillRect(i, yMax, 1, Math.max(1, yMin - yMax));
+  }
+}
 
 function mergeBuffers(channelBuffer, recordingLength) {
   const result = new Float32Array(recordingLength);
@@ -166,7 +442,7 @@ function encodeWAV(samples, sampleRate) {
     }
   }
 
-  const blockAlign = 2; // mono 16-bit
+  const blockAlign = 2;
   const byteRate = sampleRate * blockAlign;
 
   writeString(view, 0, 'RIFF');
@@ -174,12 +450,12 @@ function encodeWAV(samples, sampleRate) {
   writeString(view, 8, 'WAVE');
   writeString(view, 12, 'fmt ');
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);  // PCM
-  view.setUint16(22, 1, true);  // mono
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, byteRate, true);
   view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true); // bits per sample
+  view.setUint16(34, 16, true);
   writeString(view, 36, 'data');
   view.setUint32(40, samples.length * 2, true);
 
