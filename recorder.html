@@ -390,31 +390,37 @@ function updateLevelMeter() {
 }
 
 function drawWaveform(samples) {
-  // Ensure canvas has proper dimensions
-  waveformCanvas.width = waveformCanvas.offsetWidth * window.devicePixelRatio;
-  waveformCanvas.height = waveformCanvas.offsetHeight * window.devicePixelRatio;
-  waveformCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  console.log('Drawing waveform with', samples.length, 'samples');
   
-  const width = waveformCanvas.offsetWidth;
-  const height = waveformCanvas.offsetHeight;
-  const step = Math.ceil(samples.length / width);
+  // Reset canvas dimensions
+  const displayWidth = waveformCanvas.offsetWidth;
+  const displayHeight = waveformCanvas.offsetHeight;
+  const dpr = window.devicePixelRatio || 1;
   
-  waveformCtx.clearRect(0, 0, width, height);
-  waveformCtx.fillStyle = '#2a5d84';
-  waveformCtx.strokeStyle = '#2a5d84';
-  waveformCtx.lineWidth = 1;
+  waveformCanvas.width = displayWidth * dpr;
+  waveformCanvas.height = displayHeight * dpr;
+  
+  // Scale context to match device pixel ratio
+  waveformCtx.scale(dpr, dpr);
+  
+  // Clear canvas
+  waveformCtx.clearRect(0, 0, displayWidth, displayHeight);
   
   // Draw center line
   waveformCtx.strokeStyle = '#ccc';
+  waveformCtx.lineWidth = 1;
   waveformCtx.beginPath();
-  waveformCtx.moveTo(0, height / 2);
-  waveformCtx.lineTo(width, height / 2);
+  waveformCtx.moveTo(0, displayHeight / 2);
+  waveformCtx.lineTo(displayWidth, displayHeight / 2);
   waveformCtx.stroke();
+  
+  // Calculate step size
+  const step = Math.ceil(samples.length / displayWidth);
   
   // Draw waveform
   waveformCtx.fillStyle = '#2a5d84';
   
-  for (let i = 0; i < width; i++) {
+  for (let i = 0; i < displayWidth; i++) {
     let min = 1.0;
     let max = -1.0;
     
@@ -428,11 +434,13 @@ function drawWaveform(samples) {
     }
     
     // Convert from [-1, 1] to pixel coordinates
-    const yMin = height / 2 - (min * height / 2);
-    const yMax = height / 2 - (max * height / 2);
+    const yLow = (displayHeight / 2) * (1 - min);
+    const yHigh = (displayHeight / 2) * (1 - max);
     
-    waveformCtx.fillRect(i, yMax, 1, Math.max(1, yMin - yMax));
+    waveformCtx.fillRect(i, yHigh, 1, Math.max(1, yLow - yHigh));
   }
+  
+  console.log('Waveform drawn');
 }
 
 function mergeBuffers(channelBuffer, recordingLength) {
